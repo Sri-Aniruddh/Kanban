@@ -1,0 +1,58 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // This top-level match allows all reads/writes only until July 4, 2025.
+    match /{document=**} {
+      allow read, write: if request.time < timestamp.date(2025, 7, 4);
+    }
+
+    // Functions can only be defined inside service, but outside matches, 
+    // OR inside matches but before specific rules.
+    // Let's define reusable functions here:
+    
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function docOnlyHasRequiredFields(requiredFields) {
+      let incomingData = request.resource.data;
+      return incomingData.keys().hasAll(requiredFields) && incomingData.keys().hasOnly(requiredFields);
+    }
+
+    // Now, specify rules for user boards:
+    match /users/{userId}/boards/{boardId} {
+
+      function verifyDocFields() {
+        let incomingData = request.resource.data;
+        return incomingData.name is string
+          && incomingData.name.matches('^[a-zA-Z0-9 \t]{1,20}$')
+          && incomingData.color is number
+          && incomingData.color >= 0
+          && incomingData.color <= 5
+          && incomingData.createdAt is timestamp
+          && incomingData.createdAt == request.time;
+      }
+
+      allow read, delete: if isOwner(userId);
+      allow create: if isOwner(userId) && docOnlyHasRequiredFields(['color', 'createdAt', 'name']) && verifyDocFields();
+    }
+
+    // Rules for boardsData subcollection
+    match /users/{userId}/boards/{boardId} {
+
+      function verifyDocFields() {
+        let incomingData = request.resource.data;
+        return incomingData.tabs is map
+          && incomingData.tabs.keys().hasAll(['todos', 'inProgress', 'completed'])
+          && incomingData.tabs.keys().hasOnly(['todos', 'inProgress', 'completed'])
+          && incomingData.lastUpdated is timestamp
+          && incomingData.lastUpdated == request.time;
+      }
+
+      allow get: if isOwner(userId);
+      allow update: if isOwner(userId) && docOnlyHasRequiredFields(['tabs', 'lastUpdated']) && verifyDocFields();
+    }
+  }
+}
